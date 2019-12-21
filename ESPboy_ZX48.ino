@@ -3,6 +3,7 @@
 //shiru@mail.ru
 //https://www.patreon.com/shiru8bit
 
+
 #include <Adafruit_MCP23017.h>
 #include <Adafruit_MCP4725.h>
 #include <ESP8266WiFi.h>
@@ -59,6 +60,8 @@ uint8_t pad_state_t;
 #define PAD_RIGHT       0x08
 #define PAD_A           0x10
 #define PAD_B           0x20
+#define PAD_LFT         0x40
+#define PAD_RGT         0x80
 #define PAD_ANY         (PAD_UP|PAD_DOWN|PAD_LEFT|PAD_RIGHT|PAD_A|PAD_B)
 
 uint16_t line_buffer[128];
@@ -141,6 +144,8 @@ uint8_t control_pad_u;
 uint8_t control_pad_d;
 uint8_t control_pad_a;
 uint8_t control_pad_b;
+uint8_t control_pad_lft;
+uint8_t control_pad_rgt;
 
 enum {
   CONTROL_PAD_KEYBOARD,
@@ -486,12 +491,13 @@ int check_key()
 {
   pad_state_prev = pad_state;
   pad_state = 0;
-
+/*
   for (uint16_t i = 0; i < 8; i++)
   {
     if (!mcp.digitalRead(i)) pad_state |= (1 << i);
   }
-
+*/
+  pad_state = ~mcp.readGPIOAB() & 255;
   pad_state_t = pad_state ^ pad_state_prev & pad_state;
 
   return pad_state;
@@ -662,11 +668,11 @@ const char* const layout_name[] = {
 };
 
 const uint8_t layout_scheme[] = {
-  -1, 0, 0, 0, 0, 0,
-  K_O, K_P, K_Q, K_A, K_SPACE, K_M,
-  K_Z, K_X, K_Q, K_A, K_SPACE, K_ENTER,
-  K_6, K_7, K_9, K_8, K_0, K_ENTER,
-  K_5, K_8, K_8, K_7, K_0, K_ENTER,
+  -1, 0, 0, 0, 0, 0, 0, 0,
+  K_O, K_P, K_Q, K_A, K_SPACE, K_M, K_0, K_1,
+  K_Z, K_X, K_Q, K_A, K_SPACE, K_ENTER, K_0, K_1,
+  K_6, K_7, K_9, K_8, K_0, K_ENTER, K_SPACE, K_1,
+  K_5, K_8, K_8, K_7, K_0, K_ENTER, K_SPACE, K_1,
 };
 
 
@@ -840,7 +846,7 @@ void file_browser(String path, const char* header, char* filename, int filename_
     if (!(frame & 31)) change = true;
   }
 
-  off = control_type * 6;
+  off = control_type * 8;
 
   if (layout_scheme[off + 0] >= 0)
   {
@@ -851,6 +857,8 @@ void file_browser(String path, const char* header, char* filename, int filename_
     control_pad_d = layout_scheme[off + 3];
     control_pad_a = layout_scheme[off + 4];
     control_pad_b = layout_scheme[off + 5];
+    control_pad_lft = layout_scheme[off + 6];
+    control_pad_rgt = layout_scheme[off + 7];
   }
   else
   {
@@ -879,9 +887,12 @@ void ICACHE_RAM_ATTR sound_ISR()
 }
 
 
-
+void setup(){
   //serial init
   Serial.begin(115200);
+  
+  Serial.println(ESP.getFreeHeap());
+  
   //disable wifi to save some battery power
   WiFi.mode(WIFI_OFF);
  // WiFi.forceSleepBegin();
@@ -917,8 +928,9 @@ void ICACHE_RAM_ATTR sound_ISR()
 
   //filesystem init
   SPIFFS.begin();
-//  Serial.println(ESP.getFreeHeap() );
-//  delay(500);
+
+  Serial.println(ESP.getFreeHeap());
+
 }
 
 
@@ -965,15 +977,17 @@ void loop()
 
   //logo (skippable)
 
+ 
   if (espboy_logo_effect(0))
   {
     wait_any_key(1000);
     espboy_logo_effect(1);
   }
 
+   
   file_browser("/", "Load .Z80:", filename, sizeof(filename));
   //strcpy(filename, "/Dizzy.z80");
-
+  
   zx_init();
   zx_load_z80(filename);
 
@@ -998,6 +1012,8 @@ void loop()
         key_matrix[control_pad_d] = (pad_state & PAD_DOWN) ? 1 : 0;
         key_matrix[control_pad_a] = (pad_state & PAD_A) ? 1 : 0;
         key_matrix[control_pad_b] = (pad_state & PAD_B) ? 1 : 0;
+        key_matrix[control_pad_lft] = (pad_state & PAD_LFT) ? 1 : 0;
+        key_matrix[control_pad_rgt] = (pad_state & PAD_RGT) ? 1 : 0;
         break;
 
       case CONTROL_PAD_KEMPSTON:
