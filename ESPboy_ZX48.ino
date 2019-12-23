@@ -1,8 +1,9 @@
+//v1.1 23.12.2019  z80 format v3 support, improved frameskip, screen and controls config files
 //v1.0 20.12.2019 initial version, with sound
 //by Shiru
 //shiru@mail.ru
 //https://www.patreon.com/shiru8bit
-
+//uses Z80 core by Ketmar
 
 #include <Adafruit_MCP23017.h>
 #include <Adafruit_MCP4725.h>
@@ -23,24 +24,47 @@
    Set SPI_FREQUENCY to 39000000 for best performance.
 */
 
+/*
+   Games should be uploaded into SPIFFS as 48K .z80 snapshots (v1,v2,v3)
+   You can create such snapshots using ZXSPIN emulator
+
+   You can also put a 6912 byte screen with the exact same name to be displayed before game
+
+   You can provide an optional controls configuration file to provide convinient way to
+   control a game. Such file has extension of .cft, it is a plain text file that contains
+   a string 8 characters long. The characters may represent a key A-Z, 0-9, _ for space,
+   $ for Enter, @ for CS, # for SS
+   Warning! This file overrides manual controls selection in file manager
+
+   The order of characters is UP,DOWN,LEFT,RIGHT,ACT,ESC,LFT,RGT
+   for example: QAOPM_0$
+
+   I.e. a game file set may look like:
+
+   game.z80 - snapshot
+   game.scr - splash screen in native ZX Spectrum format
+*/
+
 #include "zymosis.h"
+
 #include "glcdfont.c"
 
-#include "gfx/espboy.h"
-#include "rom/rom.h"
+#include "gfx\espboy.h"
+#include "gfx\keyboard.h"
+#include "rom\rom.h"
+
 
 
 #define MCP23017address 0 // actually it's 0x20 but in <Adafruit_MCP23017.h> lib there is (x|0x20) :)
-#define SPIFFS_CACHE 0
 
 //PINS
-#define LEDPIN         2//D4
-#define SOUNDPIN       0//D3
+#define LEDPIN         D4
+#define SOUNDPIN       D3
 
 //SPI for LCD
 #define csTFTMCP23017pin 8
 #define TFT_RST       -1
-#define TFT_DC        15//D8
+#define TFT_DC        D8
 #define TFT_CS        -1
 
 Adafruit_MCP23017 mcp;
@@ -58,11 +82,11 @@ uint8_t pad_state_t;
 #define PAD_UP          0x02
 #define PAD_DOWN        0x04
 #define PAD_RIGHT       0x08
-#define PAD_A           0x10
-#define PAD_B           0x20
+#define PAD_ACT         0x10
+#define PAD_ESC         0x20
 #define PAD_LFT         0x40
 #define PAD_RGT         0x80
-#define PAD_ANY         (PAD_UP|PAD_DOWN|PAD_LEFT|PAD_RIGHT|PAD_A|PAD_B)
+#define PAD_ANY         0xff
 
 uint16_t line_buffer[128];
 
@@ -78,7 +102,7 @@ Z80Info cpu;
 #define ZX_CLOCK_FREQ   3500000
 #define ZX_FRAME_RATE   50
 
-#define SAMPLE_RATE     32000   //more is better, but emulations gets slower
+#define SAMPLE_RATE     48000   //more is better, but emulations gets slower
 
 #define MAX_FRAMESKIP   8
 
@@ -135,6 +159,7 @@ enum {
 
 uint8_t key_matrix[40];
 
+char filename[32];
 
 uint8_t control_type;
 
@@ -142,10 +167,11 @@ uint8_t control_pad_l;
 uint8_t control_pad_r;
 uint8_t control_pad_u;
 uint8_t control_pad_d;
-uint8_t control_pad_a;
-uint8_t control_pad_b;
+uint8_t control_pad_act;
+uint8_t control_pad_esc;
 uint8_t control_pad_lft;
 uint8_t control_pad_rgt;
+
 
 enum {
   CONTROL_PAD_KEYBOARD,
@@ -274,19 +300,46 @@ void zx_init()
 
 
 
-void zx_load_z80(const char* filename)
+void z80_unrle(uint8_t* mem, int sz)
+{
+  int i, ptr, len;
+  uint8_t val;
+
+  ptr = 0;
+
+  while (ptr < sz - 4)
+  {
+    if (mem[ptr] == 0xed && mem[ptr + 1] == 0xed)
+    {
+      len = mem[ptr + 2];
+      val = mem[ptr + 3];
+
+      memmove(&mem[ptr + len], &mem[ptr + 4], sz - (ptr + len));  //not memcpy, because of the overlapping
+
+      for (i = 0; i < len; ++i) mem[ptr++] = val;
+    }
+    else
+    {
+      ++ptr;
+    }
+  }
+}
+
+
+
+uint8_t zx_load_z80(const char* filename)
 {
   uint8_t header[30];
-  int i, sz, len, ptr, rle, val;
+  int sz, len, ptr;
+  uint8_t rle;
 
   fs::File f = SPIFFS.open(filename, "r");
 
-  if (!f) return;
+  if (!f) return 0;
 
   sz = f.size();
   f.readBytes((char*)header, sizeof(header));
-  f.readBytes((char*)memory, sz - sizeof(header));
-  f.close();
+  sz -= sizeof(header);
 
   Z80_Reset(&cpu);
 
@@ -337,27 +390,79 @@ void zx_load_z80(const char* filename)
   cpu.iff2 = header[28];
   cpu.im = (header[29] & 3);
 
-  if (rle)  //unpack RLE'd snapshot without using extra RAM, most of snapshots are packed
+  if (cpu.pc) //v1 format
   {
-    ptr = 0;
+    f.readBytes((char*)memory, sz);
 
-    while (ptr < sizeof(memory) - 4)
+    if (rle) z80_unrle(memory, 16384 * 3);
+  }
+  else  //v2 or v3 format, features an extra header
+  {
+    //read actual PC from the extra header, skip rest of the extra header
+
+    f.readBytes((char*)header, 4);
+    sz -= 4;
+
+    len = header[0] + header[1] * 256 + 2 - 4;
+    cpu.pc = header[2] + header[3] * 256;
+
+    f.seek(len, fs::SeekCur);
+    sz -= len;
+
+    //unpack 16K pages
+
+    while (sz > 0)
     {
-      if (memory[ptr] == 0xed && memory[ptr + 1] == 0xed)
+      f.readBytes((char*)header, 3);
+      sz -= 3;
+
+      len = header[0] + header[1] * 256;
+
+      switch (header[2])
       {
-        len = memory[ptr + 2];
-        val = memory[ptr + 3];
+        case 4: ptr = 0x8000; break;
+        case 5: ptr = 0xc000; break;
+        case 8: ptr = 0x4000; break;
+        default:
+          ptr = 0;
+      }
 
-        memmove(&memory[ptr + len], &memory[ptr + 4], sizeof(memory) - ptr - len);	//not memcpy, because of the overlapping
+      if (ptr)
+      {
+        ptr -= 0x4000;
 
-        for (i = 0; i < len; ++i) memory[ptr++] = val;
+        f.readBytes((char*)&memory[ptr], len);
+        sz -= len;
+
+        if (len < 0xffff) z80_unrle(&memory[ptr], 16384);
       }
       else
       {
-        ++ptr;
+        f.seek(len, fs::SeekCur);
+        sz -= len;
       }
     }
   }
+
+  f.close();
+
+  return 1;
+}
+
+
+
+uint8_t zx_load_scr(const char* filename)
+{
+  fs::File f = SPIFFS.open(filename, "r");
+
+  if (!f) return 0;
+
+  f.readBytes((char*)memory, 6912);
+  f.close();
+
+  memset(line_change, 0xff, sizeof(line_change));
+
+  return 1;
 }
 
 
@@ -490,13 +595,6 @@ void zx_render_frame()
 int check_key()
 {
   pad_state_prev = pad_state;
-  pad_state = 0;
-/*
-  for (uint16_t i = 0; i < 8; i++)
-  {
-    if (!mcp.digitalRead(i)) pad_state |= (1 << i);
-  }
-*/
   pad_state = ~mcp.readGPIOAB() & 255;
   pad_state_t = pad_state ^ pad_state_prev & pad_state;
 
@@ -667,12 +765,12 @@ const char* const layout_name[] = {
   "CURS"
 };
 
-const uint8_t layout_scheme[] = {
+const int8_t layout_scheme[] = {
   -1, 0, 0, 0, 0, 0, 0, 0,
   K_O, K_P, K_Q, K_A, K_SPACE, K_M, K_0, K_1,
   K_Z, K_X, K_Q, K_A, K_SPACE, K_ENTER, K_0, K_1,
   K_6, K_7, K_9, K_8, K_0, K_ENTER, K_SPACE, K_1,
-  K_5, K_8, K_8, K_7, K_0, K_ENTER, K_SPACE, K_1,
+  K_5, K_8, K_8, K_7, K_0, K_ENTER, K_SPACE, K_1
 };
 
 
@@ -680,27 +778,27 @@ const uint8_t layout_scheme[] = {
 #define FILE_HEIGHT    14
 #define FILE_FILTER   "z80"
 
-int file_cursor;
+int16_t file_cursor;
 
-bool file_browser_ext(const char* name)
+uint8_t file_browser_ext(const char* name)
 {
   while (1) if (*name++ == '.') break;
 
-  return (strcasecmp(name, FILE_FILTER) == 0) ? true : false;
+  return (strcasecmp(name, FILE_FILTER) == 0) ? 1 : 0;
 }
 
 
 
-void file_browser(String path, const char* header, char* filename, int filename_len)
+void file_browser(String path, const char* header, char* fname, uint16_t fname_len)
 {
   int16_t i, j, sy, pos, off, frame, file_count, control_type;
-  bool change, filter;
+  uint8_t change, filter;
   fs::Dir dir;
   fs::File entry;
   char name[19 + 1];
   const char* str;
 
-  memset(filename, 0, filename_len);
+  memset(fname, 0, fname_len);
   memset(name, 0, sizeof(name));
 
   tft.fillScreen(TFT_BLACK);
@@ -723,7 +821,7 @@ void file_browser(String path, const char* header, char* filename, int filename_
 
   if (!file_count)
   {
-    printFast(24, 60, "No files found", TFT_RED);
+    printFast(24, 60, (char*)"No files found", TFT_RED);
 
     while (1) delay(1000);
   }
@@ -731,7 +829,7 @@ void file_browser(String path, const char* header, char* filename, int filename_
   printFast(4, 4, (char*)header, TFT_GREEN);
   tft.fillRect(0, 12, 128, 1, TFT_WHITE);
 
-  change = true;
+  change = 1;
   frame = 0;
 
   while (1)
@@ -758,7 +856,7 @@ void file_browser(String path, const char* header, char* filename, int filename_
         if (!filter) continue;
 
         --i;
-        if (i <= 0) break;
+        if (i < 0) break;
       }
 
       sy = 14;
@@ -785,9 +883,9 @@ void file_browser(String path, const char* header, char* filename, int filename_
 
           if (pos == file_cursor)
           {
-            strncpy(filename, entry.name(), filename_len);
+            strncpy(fname, entry.name(), fname_len);
 
-            if (frame & 32) drawCharFast(2, sy, 0xda, TFT_WHITE, TFT_BLACK);
+            if (!(frame & 128)) drawCharFast(2, sy, 0xda, TFT_WHITE, TFT_BLACK);
           }
         }
 
@@ -804,7 +902,7 @@ void file_browser(String path, const char* header, char* filename, int filename_
         }
       }
 
-      change = false;
+      change = 0;
     }
 
     check_key();
@@ -815,8 +913,8 @@ void file_browser(String path, const char* header, char* filename, int filename_
 
       if (file_cursor < 0) file_cursor = file_count - 1;
 
-      change = true;
-      frame = 32;
+      change = 1;
+      frame = 0;
 
     }
 
@@ -826,24 +924,24 @@ void file_browser(String path, const char* header, char* filename, int filename_
 
       if (file_cursor >= file_count) file_cursor = 0;
 
-      change = true;
-      frame = 32;
+      change = 1;
+      frame = 0;
     }
 
-    if (pad_state_t&PAD_A)
+    if (pad_state_t&PAD_ACT)
     {
       ++control_type;
       if (control_type >= CONTROL_TYPES) control_type = 0;
-      change = true;
+      change = 1;
     }
 
-    if (pad_state_t & PAD_B) break;
+    if (pad_state_t & PAD_ESC) break;
 
     delay(1);
 
     ++frame;
 
-    if (!(frame & 31)) change = true;
+    if (!(frame & 127)) change = 1;
   }
 
   off = control_type * 8;
@@ -855,8 +953,8 @@ void file_browser(String path, const char* header, char* filename, int filename_
     control_pad_r = layout_scheme[off + 1];
     control_pad_u = layout_scheme[off + 2];
     control_pad_d = layout_scheme[off + 3];
-    control_pad_a = layout_scheme[off + 4];
-    control_pad_b = layout_scheme[off + 5];
+    control_pad_act = layout_scheme[off + 4];
+    control_pad_esc = layout_scheme[off + 5];
     control_pad_lft = layout_scheme[off + 6];
     control_pad_rgt = layout_scheme[off + 7];
   }
@@ -864,6 +962,8 @@ void file_browser(String path, const char* header, char* filename, int filename_
   {
     control_type = CONTROL_PAD_KEMPSTON;
   }
+
+  tft.fillScreen(TFT_BLACK);
 }
 
 
@@ -887,26 +987,31 @@ void ICACHE_RAM_ATTR sound_ISR()
 }
 
 
-void setup(){
+
+void setup()
+{
   //serial init
-  Serial.begin(115200);
-  
-  Serial.println(ESP.getFreeHeap());
-  
+
+  //Serial.begin(115200);
+  //Serial.println(ESP.getFreeHeap());
+
   //disable wifi to save some battery power
+
   WiFi.mode(WIFI_OFF);
- // WiFi.forceSleepBegin();
 
   //DAC init, LCD backlit off
+
   dac.begin(MCP4725address);
   delay(100);
   dac.setVoltage(0, false);
 
   //mcp23017 and buttons init, should preceed the TFT init
+
   mcp.begin(MCP23017address);
   delay(100);
 
-  for (int i = 0; i < 8; i++){
+  for (int i = 0; i < 8; ++i)
+  {
     mcp.pinMode(i, INPUT);
     mcp.pullUp(i, HIGH);
   }
@@ -916,10 +1021,10 @@ void setup(){
   pad_state_t = 0;
 
   //TFT init
+
   mcp.pinMode(csTFTMCP23017pin, OUTPUT);
   mcp.digitalWrite(csTFTMCP23017pin, LOW);
 
-  
   tft.begin();
   tft.setRotation(0);
   tft.fillScreen(TFT_BLACK);
@@ -927,10 +1032,12 @@ void setup(){
   dac.setVoltage(4095, true);
 
   //filesystem init
+
   SPIFFS.begin();
 
-  Serial.println(ESP.getFreeHeap());
+  //Serial.println(ESP.getFreeHeap());
 
+  delay(300);
 }
 
 
@@ -959,11 +1066,104 @@ void sound_init(void)
 
 
 
+void change_ext(char* fname, const char* ext)
+{
+  while (1)
+  {
+    if (!*fname) break;
+    if (*fname++ == '.')
+    {
+      fname[0] = ext[0];
+      fname[1] = ext[1];
+      fname[2] = ext[2];
+      break;
+    }
+  }
+}
+
+
+
+uint8_t zx_layout_code(char c)
+{
+  if (c >= 'a' && c <= 'z') c -= 32;
+
+  switch (c)
+  {
+    case 'A': return K_A;
+    case 'B': return K_B;
+    case 'C': return K_C;
+    case 'D': return K_D;
+    case 'E': return K_E;
+    case 'F': return K_F;
+    case 'G': return K_G;
+    case 'H': return K_H;
+    case 'I': return K_I;
+    case 'J': return K_J;
+    case 'K': return K_K;
+    case 'L': return K_L;
+    case 'M': return K_M;
+    case 'N': return K_N;
+    case 'O': return K_O;
+    case 'P': return K_P;
+    case 'Q': return K_Q;
+    case 'R': return K_R;
+    case 'S': return K_S;
+    case 'T': return K_T;
+    case 'U': return K_U;
+    case 'V': return K_V;
+    case 'W': return K_W;
+    case 'X': return K_X;
+    case 'Y': return K_Y;
+    case 'Z': return K_Z;
+    case '0': return K_0;
+    case '1': return K_1;
+    case '2': return K_2;
+    case '3': return K_3;
+    case '4': return K_4;
+    case '5': return K_5;
+    case '6': return K_6;
+    case '7': return K_7;
+    case '8': return K_8;
+    case '9': return K_9;
+    case '_': return K_SPACE;
+    case '$': return K_ENTER;
+    case '@': return K_CS;
+    case '#': return K_SS;
+  }
+
+  return 0;
+}
+
+
+
+void zx_load_layout(char* filename)
+{
+  char cfg[8];
+
+  fs::File f = SPIFFS.open(filename, "r");
+
+  if (!f) return;
+
+  f.readBytes(cfg, 8);
+  f.close();
+
+  control_type = CONTROL_PAD_KEYBOARD;
+  control_pad_u = zx_layout_code(cfg[0]);
+  control_pad_d = zx_layout_code(cfg[1]);
+  control_pad_l = zx_layout_code(cfg[2]);
+  control_pad_r = zx_layout_code(cfg[3]);
+  control_pad_act = zx_layout_code(cfg[4]);
+  control_pad_esc = zx_layout_code(cfg[5]);
+  control_pad_lft = zx_layout_code(cfg[6]);
+  control_pad_rgt = zx_layout_code(cfg[7]);
+}
+
+
+
 void loop()
-{ 
-  unsigned long t_prev, t_new;
-  int frames;
-  char filename[64];
+{
+  uint32_t t_prev, t_new;
+  uint8_t frames;
 
   file_cursor = 0;
 
@@ -972,27 +1172,40 @@ void loop()
   control_pad_r = K_X;
   control_pad_u = K_Q;
   control_pad_d = K_A;
-  control_pad_a = K_SPACE;
-  control_pad_b = K_ENTER;
+  control_pad_act = K_SPACE;
+  control_pad_esc = K_ENTER;
+  control_pad_lft = K_0;
+  control_pad_rgt = K_1;
 
   //logo (skippable)
 
- 
   if (espboy_logo_effect(0))
   {
     wait_any_key(1000);
     espboy_logo_effect(1);
   }
 
-   
   file_browser("/", "Load .Z80:", filename, sizeof(filename));
   //strcpy(filename, "/Dizzy.z80");
-  
+
   zx_init();
+
+  change_ext(filename, "cfg");
+  zx_load_layout(filename);
+
+  change_ext(filename, "scr");
+  if (zx_load_scr(filename))
+  {
+    zx_render_frame();
+
+    wait_any_key(3 * 1000);
+  }
+
+  change_ext(filename, "z80");
   zx_load_z80(filename);
 
   SPIFFS.end();
-  
+
   sound_init();
 
   //main loop
@@ -1010,8 +1223,8 @@ void loop()
         key_matrix[control_pad_r] = (pad_state & PAD_RIGHT) ? 1 : 0;
         key_matrix[control_pad_u] = (pad_state & PAD_UP) ? 1 : 0;
         key_matrix[control_pad_d] = (pad_state & PAD_DOWN) ? 1 : 0;
-        key_matrix[control_pad_a] = (pad_state & PAD_A) ? 1 : 0;
-        key_matrix[control_pad_b] = (pad_state & PAD_B) ? 1 : 0;
+        key_matrix[control_pad_act] = (pad_state & PAD_ACT) ? 1 : 0;
+        key_matrix[control_pad_esc] = (pad_state & PAD_ESC) ? 1 : 0;
         key_matrix[control_pad_lft] = (pad_state & PAD_LFT) ? 1 : 0;
         key_matrix[control_pad_rgt] = (pad_state & PAD_RGT) ? 1 : 0;
         break;
@@ -1022,13 +1235,16 @@ void loop()
         if (pad_state & PAD_RIGHT) port_1f |= 0x01;
         if (pad_state & PAD_UP) port_1f |= 0x08;
         if (pad_state & PAD_DOWN) port_1f |= 0x04;
-        if (pad_state & PAD_A) port_1f |= 0x10;
-        key_matrix[K_SPACE] = (pad_state & PAD_A) ? 1 : 0;
+        if (pad_state & PAD_ACT) port_1f |= 0x10;
+        key_matrix[K_SPACE] = (pad_state & PAD_ESC) ? 1 : 0;
+        key_matrix[K_0] = (pad_state & PAD_LFT) ? 1 : 0;
+        key_matrix[K_1] = (pad_state & PAD_RGT) ? 1 : 0;
         break;
     }
 
     t_new = micros();
-    frames = ((t_new - t_prev) / (1000000 / ZX_FRAME_RATE)) + 1;
+    frames = ((t_new - t_prev) / (1000000 / ZX_FRAME_RATE));
+    if (frames < 1) frames = 1;
     t_prev = t_new;
 
     if (frames > MAX_FRAMESKIP) frames = MAX_FRAMESKIP;
