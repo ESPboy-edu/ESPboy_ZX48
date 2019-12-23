@@ -15,14 +15,14 @@
 
 /******************************************************************************/
 /* some funny tables */
-static int tablesInitialized = 0;
+static uint8_t tablesInitialized = 0;
 static uint8_t sz53pTable[256]; /* bits 3, 5 and 7 of result, Z and P flags */
 
 
 /******************************************************************************/
 void Z80_InitTables (void) {
   if (!tablesInitialized) {
-    int f;
+    int16_t f;
     /***/
     for (f = 0; f <= 255; ++f) {
       int n, p;

@@ -25,7 +25,7 @@
 
 #if defined(__GNUC__)
 # ifndef ZYMOSIS_PACKED
-#  define ZYMOSIS_PACKED  __attribute__((packed)) __attribute__((gcc_struct))
+#  define ZYMOSIS_PACKED  /*__attribute__((packed)) __attribute__((gcc_struct))*/
 # endif
 # ifndef ZYMOSIS_INLINE
 #  define ZYMOSIS_INLINE  __inline
