@@ -22,16 +22,14 @@
    editting the User_Setup.h file in the TFT_eSPI library folder.
 
    Set SPI_FREQUENCY to 39000000 for best performance.
-*/
 
-/*
    Games should be uploaded into SPIFFS as 48K .z80 snapshots (v1,v2,v3)
    You can create such snapshots using ZXSPIN emulator
 
    You can also put a 6912 byte screen with the exact same name to be displayed before game
 
    You can provide an optional controls configuration file to provide convinient way to
-   control a game. Such file has extension of .cft, it is a plain text file that contains
+   control a game. Such file has extension of .cfg, it is a plain text file that contains
    a string 8 characters long. The characters may represent a key A-Z, 0-9, _ for space,
    $ for Enter, @ for CS, # for SS
    Warning! This file overrides manual controls selection in file manager
@@ -46,14 +44,10 @@
 */
 
 #include "zymosis.h"
-
 #include "glcdfont.c"
-
-#include "gfx\espboy.h"
-#include "gfx\keyboard.h"
-#include "rom\rom.h"
-
-
+#include "gfx/espboy.h"
+#include "gfx/keyboard.h"
+#include "rom/rom.h"
 
 #define MCP23017address 0 // actually it's 0x20 but in <Adafruit_MCP23017.h> lib there is (x|0x20) :)
 
@@ -63,9 +57,6 @@
 
 //SPI for LCD
 #define csTFTMCP23017pin 8
-#define TFT_RST       -1
-#define TFT_DC        D8
-#define TFT_CS        -1
 
 Adafruit_MCP23017 mcp;
 
@@ -107,7 +98,6 @@ Z80Info cpu;
 #define MAX_FRAMESKIP   8
 
 enum {
-
   K_CS = 0,
   K_Z,
   K_X,
@@ -272,7 +262,6 @@ static void port_out(Z80Info *z80, uint16_t port, uint8_t value, Z80PIOType pio)
     port_fe = value;
   }
 }
-
 
 
 
@@ -1086,7 +1075,6 @@ void change_ext(char* fname, const char* ext)
 uint8_t zx_layout_code(char c)
 {
   if (c >= 'a' && c <= 'z') c -= 32;
-
   switch (c)
   {
     case 'A': return K_A;
@@ -1146,7 +1134,7 @@ void zx_load_layout(char* filename)
 
   f.readBytes(cfg, 8);
   f.close();
-
+  
   control_type = CONTROL_PAD_KEYBOARD;
   control_pad_u = zx_layout_code(cfg[0]);
   control_pad_d = zx_layout_code(cfg[1]);
@@ -1186,26 +1174,26 @@ void loop()
   }
 
   file_browser("/", "Load .Z80:", filename, sizeof(filename));
-  //strcpy(filename, "/Dizzy.z80");
 
   zx_init();
 
   change_ext(filename, "cfg");
-  zx_load_layout(filename);
-
+  zx_load_layout(filename); 
+  
   change_ext(filename, "scr");
   if (zx_load_scr(filename))
   {
     zx_render_frame();
-
     wait_any_key(3 * 1000);
   }
 
   change_ext(filename, "z80");
   zx_load_z80(filename);
+  
 
   SPIFFS.end();
-
+  
+  memset(line_change, 0xff, sizeof(line_change));
   sound_init();
 
   //main loop
@@ -1217,16 +1205,17 @@ void loop()
     check_key();
 
     switch (control_type)
-    {
+    {  
       case CONTROL_PAD_KEYBOARD:
-        key_matrix[control_pad_l] = (pad_state & PAD_LEFT) ? 1 : 0;
-        key_matrix[control_pad_r] = (pad_state & PAD_RIGHT) ? 1 : 0;
-        key_matrix[control_pad_u] = (pad_state & PAD_UP) ? 1 : 0;
-        key_matrix[control_pad_d] = (pad_state & PAD_DOWN) ? 1 : 0;
-        key_matrix[control_pad_act] = (pad_state & PAD_ACT) ? 1 : 0;
-        key_matrix[control_pad_esc] = (pad_state & PAD_ESC) ? 1 : 0;
-        key_matrix[control_pad_lft] = (pad_state & PAD_LFT) ? 1 : 0;
-        key_matrix[control_pad_rgt] = (pad_state & PAD_RGT) ? 1 : 0;
+        memset(key_matrix, 0, sizeof(key_matrix));
+        key_matrix[control_pad_l] |= (pad_state & PAD_LEFT) ? 1 : 0;
+        key_matrix[control_pad_r] |= (pad_state & PAD_RIGHT) ? 1 : 0;
+        key_matrix[control_pad_u] |= (pad_state & PAD_UP) ? 1 : 0;
+        key_matrix[control_pad_d] |= (pad_state & PAD_DOWN) ? 1 : 0;
+        key_matrix[control_pad_act] |= (pad_state & PAD_ACT) ? 1 : 0;
+        key_matrix[control_pad_esc] |= (pad_state & PAD_ESC) ? 1 : 0;
+        key_matrix[control_pad_lft] |= (pad_state & PAD_LFT) ? 1 : 0;
+        key_matrix[control_pad_rgt] |= (pad_state & PAD_RGT) ? 1 : 0;
         break;
 
       case CONTROL_PAD_KEMPSTON:
