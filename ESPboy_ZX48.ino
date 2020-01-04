@@ -1,3 +1,4 @@
+//v1.2 05.01.2020 bug fixes, keyboard module support (allows to use spectrum basic but slows emulator overall)
 //v1.1 23.12.2019  z80 format v3 support, improved frameskip, screen and controls config files
 //v1.0 20.12.2019 initial version, with sound
 //by Shiru
@@ -59,6 +60,7 @@
 #define csTFTMCP23017pin 8
 
 Adafruit_MCP23017 mcp;
+Adafruit_MCP23017 mcpKeyboard;
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -68,6 +70,7 @@ Adafruit_MCP4725 dac;
 uint8_t pad_state;
 uint8_t pad_state_prev;
 uint8_t pad_state_t;
+uint8_t keybModuleExist;
 
 #define PAD_LEFT        0x01
 #define PAD_UP          0x02
@@ -146,6 +149,18 @@ enum {
   K_N,
   K_B,
 };
+
+
+constexpr uint8_t keybCurrent[7][5] PROGMEM = {
+    {K_Q, K_E, K_R, K_U, K_O}, 
+    {K_W, K_S, K_G, K_H, K_L},  
+    {255, K_D, K_T, K_Y, K_I}, 
+    {K_A, K_P, K_SS, K_ENTER, K_0}, 
+    {K_SPACE, K_Z, K_C, K_N, K_M}, 
+    {K_CS, K_X, K_V, K_B, K_6}, 
+    {K_P, K_SS, K_F, K_J, K_K}
+};
+
 
 uint8_t key_matrix[40];
 
@@ -526,8 +541,7 @@ void zx_render_frame()
 
     col = LHSWAP(palette[port_fe & 7] << 2);
 
-    for (i = 0; i < 128; ++i) line_buffer[i] = col;
-
+    memset (line_buffer, col, sizeof(line_buffer));  
     for (i = 0; i < 16; ++i)
     {
       tft.pushImage(0, i, 128, 1, line_buffer);
@@ -1020,12 +1034,27 @@ void setup()
 
   dac.setVoltage(4095, true);
 
+  //keybModule init
+  Wire.begin();    
+  Wire.beginTransmission(0x27); //check for MCP23017Keyboard at address 0x27
+  if (!Wire.endTransmission()) {
+    keybModuleExist = 1;
+    mcpKeyboard.begin(7);
+    for (uint8_t i = 0; i < 7; i++){
+      mcpKeyboard.pinMode(i, OUTPUT);
+      mcpKeyboard.digitalWrite(i, HIGH);}
+    for (uint8_t i = 0; i < 5; i++){
+      mcpKeyboard.pinMode(i+8, INPUT);
+      mcpKeyboard.pullUp(i+8, HIGH);}
+    mcpKeyboard.pinMode(7, OUTPUT); 
+    mcpKeyboard.digitalWrite(7, HIGH); //backlit on
+   }
+  else keybModuleExist = 0;
+ 
   //filesystem init
-
   SPIFFS.begin();
 
   //Serial.println(ESP.getFreeHeap());
-
   delay(300);
 }
 
@@ -1231,6 +1260,21 @@ void loop()
         break;
     }
 
+//check keyboard module
+    if (keybModuleExist){
+      static uint8_t keysReaded[7];
+      static uint8_t row, col;
+      for (row = 0; row < 7; row++){
+        mcpKeyboard.digitalWrite(row, LOW);
+        keysReaded [row] = ((mcpKeyboard.readGPIOAB()>>8) & 31);
+        mcpKeyboard.digitalWrite(row, HIGH);
+      }
+      for (row = 0; row < 7; row++)
+        for (col = 0; col < 5; col++)
+          if (!((keysReaded[row] >> col) & 1))
+             key_matrix[pgm_read_byte(&keybCurrent[row][col])] |= 1;
+    }
+    
     t_new = micros();
     frames = ((t_new - t_prev) / (1000000 / ZX_FRAME_RATE));
     if (frames < 1) frames = 1;
