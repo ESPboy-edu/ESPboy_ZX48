@@ -158,9 +158,18 @@ constexpr uint8_t keybCurrent[7][5] PROGMEM = {
     {K_A, K_P, K_SS, K_ENTER, K_0}, 
     {K_SPACE, K_Z, K_C, K_N, K_M}, 
     {K_CS, K_X, K_V, K_B, K_6}, 
-    {K_P, K_SS, K_F, K_J, K_K}
+    {K_0, K_SS, K_F, K_J, K_K}
 };
 
+constexpr uint8_t keybCurrent2[7][5] PROGMEM = {
+    {K_Q, K_2, K_3, K_U, K_O}, 
+    {K_1, K_4, K_G, K_H, K_L},  
+    {255, K_5, K_T, K_Y, K_I}, 
+    {K_A, K_P, K_SS, K_ENTER, K_0}, 
+    {K_SPACE, K_7, K_9, K_N, K_M}, 
+    {K_CS, K_8, K_V, K_B, K_6}, 
+    {K_0, K_SS, K_6, K_J, K_K}
+};
 
 uint8_t key_matrix[40];
 
@@ -1264,15 +1273,23 @@ void loop()
     if (keybModuleExist){
       static uint8_t keysReaded[7];
       static uint8_t row, col;
+      static uint8_t keykeyboardpressed;
+      static uint8_t symkeyboardpressed;
+      symkeyboardpressed = 0;
       for (row = 0; row < 7; row++){
         mcpKeyboard.digitalWrite(row, LOW);
         keysReaded [row] = ((mcpKeyboard.readGPIOAB()>>8) & 31);
         mcpKeyboard.digitalWrite(row, HIGH);
       }
+      if (!(keysReaded[2]&1)) symkeyboardpressed = 1; // if "sym" key is pressed
       for (row = 0; row < 7; row++)
         for (col = 0; col < 5; col++)
           if (!((keysReaded[row] >> col) & 1))
-             key_matrix[pgm_read_byte(&keybCurrent[row][col])] |= 1;
+          {
+            if (!symkeyboardpressed) keykeyboardpressed = pgm_read_byte(&keybCurrent[row][col]);
+            else keykeyboardpressed = pgm_read_byte(&keybCurrent2[row][col]);
+            if (keykeyboardpressed != 255) key_matrix[keykeyboardpressed] |= 1;   
+          }   
     }
     
     t_new = micros();
