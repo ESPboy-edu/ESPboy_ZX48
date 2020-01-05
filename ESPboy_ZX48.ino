@@ -1017,7 +1017,7 @@ void setup()
   dac.setVoltage(0, false);
 
   //mcp23017 and buttons init, should preceed the TFT init
-  Wire.setClock(400000);
+  Wire.setClock(1000000);
   mcp.begin(MCP23017address);
   delay(100);
 
