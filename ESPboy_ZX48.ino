@@ -549,8 +549,7 @@ void zx_render_frame()
     line_change[32] = 0;
 
     col = LHSWAP(palette[port_fe & 7] << 2);
-
-    memset (line_buffer, col, sizeof(line_buffer));  
+    for (i = 0; i < 128; ++i) line_buffer[i] = col; 
     for (i = 0; i < 16; ++i)
     {
       tft.pushImage(0, i, 128, 1, line_buffer);
@@ -1018,7 +1017,7 @@ void setup()
   dac.setVoltage(0, false);
 
   //mcp23017 and buttons init, should preceed the TFT init
-
+  Wire.setClock(400000);
   mcp.begin(MCP23017address);
   delay(100);
 
