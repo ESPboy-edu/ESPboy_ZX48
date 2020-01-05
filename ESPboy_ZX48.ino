@@ -148,6 +148,9 @@ enum {
   K_M,
   K_N,
   K_B,
+  
+  K_DEL,
+  K_LED,
 };
 
 
@@ -155,17 +158,17 @@ constexpr uint8_t keybCurrent[7][5] PROGMEM = {
     {K_Q, K_E, K_R, K_U, K_O}, 
     {K_W, K_S, K_G, K_H, K_L},  
     {255, K_D, K_T, K_Y, K_I}, 
-    {K_A, K_P, K_SS, K_ENTER, K_0}, 
+    {K_A, K_P, K_SS, K_ENTER, K_DEL}, 
     {K_SPACE, K_Z, K_C, K_N, K_M}, 
     {K_CS, K_X, K_V, K_B, K_6}, 
-    {K_0, K_SS, K_F, K_J, K_K}
+    {K_LED, K_SS, K_F, K_J, K_K}
 };
 
 constexpr uint8_t keybCurrent2[7][5] PROGMEM = {
     {K_Q, K_2, K_3, K_U, K_O}, 
     {K_1, K_4, K_G, K_H, K_L},  
     {255, K_5, K_T, K_Y, K_I}, 
-    {K_A, K_P, K_SS, K_ENTER, K_0}, 
+    {K_A, K_P, K_SS, K_ENTER, K_DEL}, 
     {K_SPACE, K_7, K_9, K_N, K_M}, 
     {K_CS, K_8, K_V, K_B, K_6}, 
     {K_0, K_SS, K_6, K_J, K_K}
@@ -1010,6 +1013,9 @@ void setup()
 
   WiFi.mode(WIFI_OFF);
 
+//I2C to 1mHz
+  Wire.setClock(1000000);
+  
   //DAC init, LCD backlit off
 
   dac.begin(MCP4725address);
@@ -1017,7 +1023,6 @@ void setup()
   dac.setVoltage(0, false);
 
   //mcp23017 and buttons init, should preceed the TFT init
-  Wire.setClock(1000000);
   mcp.begin(MCP23017address);
   delay(100);
 
@@ -1287,7 +1292,15 @@ void loop()
           {
             if (!symkeyboardpressed) keykeyboardpressed = pgm_read_byte(&keybCurrent[row][col]);
             else keykeyboardpressed = pgm_read_byte(&keybCurrent2[row][col]);
-            if (keykeyboardpressed != 255) key_matrix[keykeyboardpressed] |= 1;   
+            if (keykeyboardpressed < 40) key_matrix[keykeyboardpressed] |= 1;
+            else {
+              if (keykeyboardpressed == K_DEL){
+                key_matrix[K_0]|=1;
+                key_matrix[K_CS]|=1;}
+              if (keykeyboardpressed == K_LED){ 
+                mcpKeyboard.digitalWrite(7, !mcpKeyboard.digitalRead(7));
+                delay(100);}
+            }   
           }   
     }
     
