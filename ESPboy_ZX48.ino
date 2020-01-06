@@ -521,7 +521,8 @@ void zx_emulate_frame()
 
 
 #define RGB565Q(r,g,b)    ( ((((r)>>5)&0x1f)<<11) | ((((g)>>4)&0x3f)<<5) | (((b)>>5)&0x1f) )
-#define LHSWAP(w)         ( (((w)>>8)&0x00ff) | (((w)<<8)&0xff00) )
+//#define LHSWAP(w)         ( (((w)>>8)&0x00ff) | (((w)<<8)&0xff00) )
+#define LHSWAP(w)         ( ((w)>>8) | ((w)<<8) )
 
 void zx_render_frame()
 {
@@ -611,7 +612,6 @@ int check_key()
   pad_state_prev = pad_state;
   pad_state = ~mcp.readGPIOAB() & 255;
   pad_state_t = pad_state ^ pad_state_prev & pad_state;
-
   return pad_state;
 }
 
@@ -951,8 +951,12 @@ void file_browser(String path, const char* header, char* fname, uint16_t fname_l
 
     if (pad_state_t & PAD_ESC) break;
 
+    if ((pad_state&PAD_LFT) || (pad_state&PAD_RGT)) {
+      fname[0]=0;
+      break;
+    }
+    
     delay(1);
-
     ++frame;
 
     if (!(frame & 127)) change = 1;
@@ -1019,9 +1023,10 @@ void setup()
   //DAC init, LCD backlit off
 
   dac.begin(MCP4725address);
-  delay(100);
+  delay(50);
   dac.setVoltage(0, false);
-
+  delay(50);
+  
   //mcp23017 and buttons init, should preceed the TFT init
   mcp.begin(MCP23017address);
   delay(100);
@@ -1219,19 +1224,21 @@ void loop()
 
   zx_init();
 
-  change_ext(filename, "cfg");
-  zx_load_layout(filename); 
-  
-  change_ext(filename, "scr");
-  if (zx_load_scr(filename))
+  if (filename != "")
   {
-    zx_render_frame();
-    wait_any_key(3 * 1000);
-  }
-
-  change_ext(filename, "z80");
-  zx_load_z80(filename);
+    change_ext(filename, "cfg");
+    zx_load_layout(filename); 
   
+    change_ext(filename, "scr");
+    if (zx_load_scr(filename))
+    {
+      zx_render_frame();
+      wait_any_key(3 * 1000);
+    }
+
+    change_ext(filename, "z80");
+    zx_load_z80(filename);
+  }
 
   SPIFFS.end();
   
