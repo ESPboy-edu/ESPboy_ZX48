@@ -1,4 +1,4 @@
-//v1.2 05.01.2020 bug fixes, keyboard module support (allows to use spectrum basic but slows emulator overall)
+//v1.2 06.01.2020 bug fixes, onscreen keyboard added, keyboard module support
 //v1.1 23.12.2019  z80 format v3 support, improved frameskip, screen and controls config files
 //v1.0 20.12.2019 initial version, with sound
 //by Shiru
@@ -173,6 +173,17 @@ constexpr uint8_t keybCurrent2[7][5] PROGMEM = {
     {K_CS, K_8, K_V, K_B, K_6}, 
     {K_0, K_SS, K_6, K_J, K_K}
 };
+
+constexpr uint8_t keybOnscrMatrix[2][20] PROGMEM = {
+    {K_1, K_2, K_3, K_4, K_5, K_6, K_7, K_8, K_9, K_0, K_Q, K_W, K_E, K_R, K_T, K_Y, K_U, K_I, K_O, K_P}, 
+    {K_A, K_S, K_D, K_F, K_G, K_H, K_J, K_K, K_L, K_ENTER, K_CS, K_Z, K_X, K_C, K_V, K_B, K_N, K_M, K_SS, K_SPACE},  
+};
+
+constexpr uint8_t keybOnscr[2][21] PROGMEM = {
+"1234567890QWERTYUIOP",
+"ASDFGHJKLecZXCVBNMs_",
+};
+
 
 uint8_t key_matrix[40];
 
@@ -693,7 +704,7 @@ void drawBMP8Part(int16_t x, int16_t y, const uint8_t bitmap[], int16_t dx, int1
 
 
 
-void drawCharFast(uint16_t x, uint16_t y, uint16_t c, uint16_t color, uint16_t bg)
+void drawCharFast(uint16_t x, uint16_t y, uint8_t c, uint16_t color, uint16_t bg)
 {
   uint16_t i, j, c16, line;
 
@@ -1025,7 +1036,7 @@ void setup()
   dac.begin(MCP4725address);
   delay(50);
   dac.setVoltage(0, false);
-  delay(50);
+  delay(100);
   
   //mcp23017 and buttons init, should preceed the TFT init
   mcp.begin(MCP23017address);
@@ -1194,6 +1205,67 @@ void zx_load_layout(char* filename)
 }
 
 
+void keybModule(){
+      static uint8_t keysReaded[7];
+      static uint8_t row, col;
+      static uint8_t keykeyboardpressed;
+      static uint8_t symkeyboardpressed;
+      symkeyboardpressed = 0;
+      for (row = 0; row < 7; row++){
+        mcpKeyboard.digitalWrite(row, LOW);
+        keysReaded [row] = ((mcpKeyboard.readGPIOAB()>>8) & 31);
+        mcpKeyboard.digitalWrite(row, HIGH);
+      }
+      if (!(keysReaded[2]&1)) symkeyboardpressed = 1; // if "sym" key is pressed
+      for (row = 0; row < 7; row++)
+        for (col = 0; col < 5; col++)
+          if (!((keysReaded[row] >> col) & 1))
+          {
+            if (!symkeyboardpressed) keykeyboardpressed = pgm_read_byte(&keybCurrent[row][col]);
+            else keykeyboardpressed = pgm_read_byte(&keybCurrent2[row][col]);
+            if (keykeyboardpressed < 40) key_matrix[keykeyboardpressed] |= 1;
+            else {
+              if (keykeyboardpressed == K_DEL){
+                key_matrix[K_0]|=1;
+                key_matrix[K_CS]|=1;}
+              if (keykeyboardpressed == K_LED){ 
+                mcpKeyboard.digitalWrite(7, !mcpKeyboard.digitalRead(7));
+                delay(100);}
+            }   
+          }   
+}
+
+
+void redrawOnscreen(uint8_t slX, uint8_t slY){
+  tft.fillRect(0, 128 - 16, 128, 16, TFT_BLACK);
+  for (uint8_t i=0; i<20; i++) drawCharFast(i*6+4, 128-16, pgm_read_byte(&keybOnscr[0][i]), TFT_YELLOW, TFT_BLACK); 
+  for (uint8_t i=0; i<20; i++) drawCharFast(i*6+4, 128-8, pgm_read_byte(&keybOnscr[1][i]), TFT_YELLOW, TFT_BLACK); 
+  drawCharFast(slX*6+4, 128-16+slY*8, pgm_read_byte(&keybOnscr[slY][slX]), TFT_RED, TFT_BLACK); 
+}
+
+
+void keybOnscreen(){
+  uint8_t selX = 0, selY = 0;
+    redrawOnscreen(selX, selY);
+    while(1){
+      check_key();
+      delay(100);
+      if ((pad_state&PAD_RIGHT) && selX < 19) selX++;
+      if ((pad_state&PAD_LEFT) && selX > 0) selX--;
+      if ((pad_state&PAD_DOWN) && selY < 1) selY++;
+      if ((pad_state&PAD_UP) && selY > 0) selY--;
+      if ((pad_state&PAD_ACT) || (pad_state&PAD_ESC)) break;
+      if (pad_state) redrawOnscreen(selX, selY);
+    }
+    
+    if (pad_state&PAD_ACT) key_matrix[pgm_read_byte(&keybOnscrMatrix[selY][selX])] |= 1;
+    delay(300);
+    check_key();
+    tft.fillRect(0, 128-16, 128, 16, TFT_BLACK);
+    memset(line_change, 0xff, sizeof(line_change));
+}
+
+
 
 void loop()
 {
@@ -1250,13 +1322,19 @@ void loop()
   t_prev = micros();
 
   while (1)
-  {
+  { 
+    memset(key_matrix, 0, sizeof(key_matrix));
     check_key();
+
+//check onscreen keyboard
+    if ((pad_state&PAD_LFT) && (pad_state&PAD_RGT)) keybOnscreen();
+    
+//check keyboard module
+    if (keybModuleExist) keybModule();
 
     switch (control_type)
     {  
       case CONTROL_PAD_KEYBOARD:
-        memset(key_matrix, 0, sizeof(key_matrix));
         key_matrix[control_pad_l] |= (pad_state & PAD_LEFT) ? 1 : 0;
         key_matrix[control_pad_r] |= (pad_state & PAD_RIGHT) ? 1 : 0;
         key_matrix[control_pad_u] |= (pad_state & PAD_UP) ? 1 : 0;
@@ -1278,37 +1356,6 @@ void loop()
         key_matrix[K_0] = (pad_state & PAD_LFT) ? 1 : 0;
         key_matrix[K_1] = (pad_state & PAD_RGT) ? 1 : 0;
         break;
-    }
-
-//check keyboard module
-    if (keybModuleExist){
-      static uint8_t keysReaded[7];
-      static uint8_t row, col;
-      static uint8_t keykeyboardpressed;
-      static uint8_t symkeyboardpressed;
-      symkeyboardpressed = 0;
-      for (row = 0; row < 7; row++){
-        mcpKeyboard.digitalWrite(row, LOW);
-        keysReaded [row] = ((mcpKeyboard.readGPIOAB()>>8) & 31);
-        mcpKeyboard.digitalWrite(row, HIGH);
-      }
-      if (!(keysReaded[2]&1)) symkeyboardpressed = 1; // if "sym" key is pressed
-      for (row = 0; row < 7; row++)
-        for (col = 0; col < 5; col++)
-          if (!((keysReaded[row] >> col) & 1))
-          {
-            if (!symkeyboardpressed) keykeyboardpressed = pgm_read_byte(&keybCurrent[row][col]);
-            else keykeyboardpressed = pgm_read_byte(&keybCurrent2[row][col]);
-            if (keykeyboardpressed < 40) key_matrix[keykeyboardpressed] |= 1;
-            else {
-              if (keykeyboardpressed == K_DEL){
-                key_matrix[K_0]|=1;
-                key_matrix[K_CS]|=1;}
-              if (keykeyboardpressed == K_LED){ 
-                mcpKeyboard.digitalWrite(7, !mcpKeyboard.digitalRead(7));
-                delay(100);}
-            }   
-          }   
     }
     
     t_new = micros();
