@@ -51,21 +51,16 @@
 #include "rom/rom.h"
 
 #define MCP23017address 0 // actually it's 0x20 but in <Adafruit_MCP23017.h> lib there is (x|0x20) :)
-
-//PINS
+#define MCP4725address 0x60
 #define LEDPIN         D4
 #define SOUNDPIN       D3
-
-//SPI for LCD
-#define csTFTMCP23017pin 8
+#define csTFTMCP23017pin 8 //SPI for LCD
 
 Adafruit_MCP23017 mcp;
 Adafruit_MCP23017 mcpKeyboard;
+Adafruit_MCP4725 dac;
 
 TFT_eSPI tft = TFT_eSPI();
-
-#define MCP4725address 0x60
-Adafruit_MCP4725 dac;
 
 uint8_t pad_state;
 uint8_t pad_state_prev;
@@ -151,6 +146,7 @@ enum {
   
   K_DEL,
   K_LED,
+  K_NULL = 255,
 };
 
 
@@ -167,7 +163,7 @@ constexpr uint8_t keybCurrent[7][5] PROGMEM = {
 constexpr uint8_t keybCurrent2[7][5] PROGMEM = {
     {K_Q, K_2, K_3, K_U, K_O}, 
     {K_1, K_4, K_G, K_H, K_L},  
-    {255, K_5, K_T, K_Y, K_I}, 
+    {K_NULL, K_5, K_T, K_Y, K_I}, 
     {K_A, K_P, K_SS, K_ENTER, K_DEL}, 
     {K_SPACE, K_7, K_9, K_N, K_M}, 
     {K_CS, K_8, K_V, K_B, K_6}, 
@@ -185,7 +181,7 @@ constexpr uint8_t keybOnscr[2][21] PROGMEM = {
 };
 
 
-uint8_t key_matrix[40];
+uint8_t key_matrix[41]; //41 is NULL
 
 char filename[32];
 
@@ -1017,22 +1013,14 @@ void ICACHE_RAM_ATTR sound_ISR()
 
 
 
-void setup()
-{
-  //serial init
-
+void setup(){
   //Serial.begin(115200);
   //Serial.println(ESP.getFreeHeap());
 
-  //disable wifi to save some battery power
-
-  WiFi.mode(WIFI_OFF);
-
-//I2C to 1mHz
-  Wire.setClock(1000000);
+  WiFi.mode(WIFI_OFF); //disable wifi to save some battery power
+  Wire.setClock(1000000); //I2C to 1mHz
   
   //DAC init, LCD backlit off
-
   dac.begin(MCP4725address);
   delay(50);
   dac.setVoltage(0, false);
@@ -1084,7 +1072,6 @@ void setup()
   SPIFFS.begin();
 
   //Serial.println(ESP.getFreeHeap());
-  delay(300);
 }
 
 
@@ -1236,17 +1223,19 @@ void keybModule(){
 }
 
 
-void redrawOnscreen(uint8_t slX, uint8_t slY){
+void redrawOnscreen(uint8_t slX, uint8_t slY, uint8_t shf){
   tft.fillRect(0, 128 - 16, 128, 16, TFT_BLACK);
   for (uint8_t i=0; i<20; i++) drawCharFast(i*6+4, 128-16, pgm_read_byte(&keybOnscr[0][i]), TFT_YELLOW, TFT_BLACK); 
   for (uint8_t i=0; i<20; i++) drawCharFast(i*6+4, 128-8, pgm_read_byte(&keybOnscr[1][i]), TFT_YELLOW, TFT_BLACK); 
   drawCharFast(slX*6+4, 128-16+slY*8, pgm_read_byte(&keybOnscr[slY][slX]), TFT_RED, TFT_BLACK); 
+  if (shf&1) drawCharFast(10*6+4, 128-16+8, pgm_read_byte(&keybOnscr[1][10]), TFT_RED, TFT_BLACK);
+  if (shf&2) drawCharFast(18*6+4, 128-16+8, pgm_read_byte(&keybOnscr[1][18]), TFT_RED, TFT_BLACK);
 }
 
 
 void keybOnscreen(){
-  uint8_t selX = 0, selY = 0;
-    redrawOnscreen(selX, selY);
+  uint8_t selX = 0, selY = 0, shifts = 0;
+    redrawOnscreen(selX, selY, shifts);
     while(1){
       check_key();
       delay(100);
@@ -1254,11 +1243,15 @@ void keybOnscreen(){
       if ((pad_state&PAD_LEFT) && selX > 0) selX--;
       if ((pad_state&PAD_DOWN) && selY < 1) selY++;
       if ((pad_state&PAD_UP) && selY > 0) selY--;
-      if ((pad_state&PAD_ACT) || (pad_state&PAD_ESC)) break;
-      if (pad_state) redrawOnscreen(selX, selY);
+      if (((pad_state&PAD_ACT) || (pad_state&PAD_ESC)) && !(selX == 10 && selY == 1) && !(selX == 18 && selY == 1)) break;
+      if ((pad_state&PAD_ACT) && (selX == 10) && (selY == 1)) {shifts^=1; delay (300);}
+      if ((pad_state&PAD_ACT) && (selX == 18) && (selY == 1)) {shifts^=2; delay (300);}
+      if (pad_state) redrawOnscreen(selX, selY, shifts);
     }
     
     if (pad_state&PAD_ACT) key_matrix[pgm_read_byte(&keybOnscrMatrix[selY][selX])] |= 1;
+    if (pad_state&PAD_ACT && (shifts&1)) key_matrix[K_CS] |= 1;
+    if (pad_state&PAD_ACT && (shifts&2)) key_matrix[K_SS] |= 1;
     delay(300);
     check_key();
     tft.fillRect(0, 128-16, 128, 16, TFT_BLACK);
@@ -1281,8 +1274,8 @@ void loop()
   control_pad_d = K_A;
   control_pad_act = K_SPACE;
   control_pad_esc = K_ENTER;
-  control_pad_lft = K_0;
-  control_pad_rgt = K_1;
+  control_pad_lft = K_NULL;
+  control_pad_rgt = K_NULL;
 
   //logo (skippable)
 
