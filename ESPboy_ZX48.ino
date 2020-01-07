@@ -1022,7 +1022,7 @@ void setup(){
   
   //DAC init, LCD backlit off
   dac.begin(MCP4725address);
-  delay(50);
+  delay(100);
   dac.setVoltage(0, false);
   delay(100);
   
@@ -1244,8 +1244,10 @@ void keybOnscreen(){
       if ((pad_state&PAD_DOWN) && selY < 1) selY++;
       if ((pad_state&PAD_UP) && selY > 0) selY--;
       if (((pad_state&PAD_ACT) || (pad_state&PAD_ESC)) && !(selX == 10 && selY == 1) && !(selX == 18 && selY == 1)) break;
-      if ((pad_state&PAD_ACT) && (selX == 10) && (selY == 1)) {shifts^=1; delay (300);}
-      if ((pad_state&PAD_ACT) && (selX == 18) && (selY == 1)) {shifts^=2; delay (300);}
+      if ((pad_state&PAD_ACT) && (selX == 10) && (selY == 1)) {shifts|=(shifts^1); delay (300);}
+      if ((pad_state&PAD_ACT) && (selX == 18) && (selY == 1)) {shifts|=(shifts^2); delay (300);}
+      if ((pad_state&PAD_ACT) && (selX == 10) && (selY == 1) && (shifts&2)) break;
+      if ((pad_state&PAD_ACT) && (selX == 18) && (selY == 1) && (shifts&1)) break;
       if (pad_state) redrawOnscreen(selX, selY, shifts);
     }
     
