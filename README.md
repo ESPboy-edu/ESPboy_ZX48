@@ -1,15 +1,18 @@
 # ESPboy_ZX48
 ESPboy emulator of the famous ZX Spectrum 48 machine. Let's play retro ZX48 games )
-
-1369 lines (1035 sloc)  28.5 KB
-RawBlameHistory
     
 v1.2 06.01.2020 bug fixes, onscreen keyboard added, keyboard module support
+
 v1.1 23.12.2019  z80 format v3 support, improved frameskip, screen and controls config files
+
 v1.0 20.12.2019 initial version, with sound
+
 by Shiru
+
 shiru@mail.ru
+
 https://www.patreon.com/shiru8bit
+
 uses Z80 core by Ketmar
 
 IMPORTANT: the project consumes a lot of RAM, to allow enough set
