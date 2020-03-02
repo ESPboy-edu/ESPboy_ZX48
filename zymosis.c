@@ -563,7 +563,7 @@ void Z80_Execute (Z80Info *z80) {
           disp = Z80_PeekB3TA(z80, z80->pc); if (disp > 127) disp -= 256;
           INC_PC;
           z80->memptr.w = ZADD_WX(z80->dd->w, disp);
-      } else if (opcode == 0xdd && opcode == 0xfd) {
+      } else if (opcode == 0xdd || opcode == 0xfd) {
         /* double prefix; restart main loop */
         z80->prev_was_EIDDR = 1;
         continue;

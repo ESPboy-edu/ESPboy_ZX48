@@ -1291,7 +1291,7 @@ void loop()
 
   zx_init();
 
-  if (filename != "")
+  if (strlen(filename) != 0)
   {
     change_ext(filename, "cfg");
     zx_load_layout(filename); 
